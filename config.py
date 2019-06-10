@@ -1,42 +1,42 @@
-# class Config:
-#     def __init__(self):
-#         # length limitation of the sentence
-#         self.para_limit = 400
-#         self.ques_limit = 50
-#         self.ans_limit = 30
-#         self.char_limit = 64
-#         self.pad_word = '<pad>' # pad words in sentence
-#         self.pad_char = '<pad>' # pad chars in words
-#
-#         # dimension limitation of the model
-#         self.d_word = 300
-#         self.embed_char_dim = 64
-#         self.d_model = 128
-#         self.d_char = 200
-#
-#         # multihead attention
-#         self.n_head = 8
-#
-#         # dropout probability
-#         self.dropout = 0.2
-#
-#         # batch size
-#         self.batch_size = 5
-#         self.val_batch_size = 5
-#
-#         self.grad_clip = 5.0  # Global Norm gradient clipping rate
-#
-#         self.learning_rate = 0.001
-#
-#         self.lr_warm_up_num = 1000
-#
-#         self.ema_decay = 0.9999
-#         self.beta1 = 0.8
-#         self.beta2 = 0.999
-#         self.eps = 1e-7
-#
-#         self.checkpoint = 200
-#         self.num_epoch = 10
+class Config:
+    def __init__(self):
+        # length limitation of the sentence
+        self.para_limit = 400
+        self.ques_limit = 50
+        self.ans_limit = 30
+        self.char_limit = 64
+        self.pad_word = '<pad>' # pad words in sentence
+        self.pad_char = '<pad>' # pad chars in words
+
+        # dimension limitation of the model
+        self.d_word = 300
+        self.embed_char_dim = 64
+        self.d_model = 128
+        self.d_char = 200
+
+        # multihead attention
+        self.n_head = 8
+
+        # dropout probability
+        self.dropout = 0.2
+
+        # batch size
+        self.batch_size = 5
+        self.val_batch_size = 5
+
+        self.grad_clip = 5.0  # Global Norm gradient clipping rate
+
+        self.learning_rate = 0.001
+
+        self.lr_warm_up_num = 1000
+
+        self.ema_decay = 0.9999
+        self.beta1 = 0.8
+        self.beta2 = 0.999
+        self.eps = 1e-7
+
+        self.checkpoint = 200
+        self.num_epoch = 10
 
 import os
 
@@ -81,7 +81,7 @@ num_threads = 4 #Number of threads in input pipeline
 is_bucket = False #build bucket batch iterator or not
 bucket_range = [40, 401, 40] #the range of bucket
 
-batch_size = 8 #Batch size
+batch_size = 15 #Batch size
 num_steps = 60000 #Number of steps
 checkpoint = 200 #checkpoint to save and evaluate the model
 period = 100 #period to save batch loss
@@ -110,3 +110,5 @@ fasttext = False #Whether to use fasttext
 d_char = 64
 eps = 1e-7
 num_epoch = 20
+val_batch_size = 5
+d_word = 300

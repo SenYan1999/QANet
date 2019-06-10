@@ -3,35 +3,49 @@ import torch.nn as nn
 from tqdm import tqdm
 import numpy as np
 import pickle
-# from config import Config
-import config
 from model import QANet
-# from standardmodel import QANet
-from utils import SQuADData
+# from config import Config
+import ujson as json
+import config
+from standardmodel import QANet
+from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from utils import valid
 import torch.optim as optim
 from math import log2
-from proc import load
-from collections import Counter
+
+class SQuADData(Dataset):
+    def __init__(self, npz_file):
+        super().__init__()
+        data = np.load(npz_file)
+        self.context_idxs = torch.from_numpy(data["context_idxs"]).long().to(device)
+        self.context_char_idxs = torch.from_numpy(data["context_char_idxs"]).long().to(device)
+        self.ques_idxs = torch.from_numpy(data["ques_idxs"]).long().to(device)
+        self.ques_char_idxs = torch.from_numpy(data["ques_char_idxs"]).long().to(device)
+        self.y1s = torch.from_numpy(data["y1s"]).long().to(device)
+        self.y2s = torch.from_numpy(data["y2s"]).long().to(device)
+        self.ids = torch.from_numpy(data["ids"]).long().to(device)
+
+    def __len__(self):
+        return self.context_idxs.shape[0]
+
+    def __getitem__(self, item):
+        return self.context_idxs[item], self.context_char_idxs[item], self.ques_idxs[item], self.ques_char_idxs[item], self.y1s[item], self.y2s[item], self.ids[item]
 
 
 # prepare data
 print('prepare data')
 # config = Config()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-pre_trained_ = load('pre_data/embed_pre.json')
-pre_trained = pre_trained_[0]
-del pre_trained_
+with open('pre_data/word_emb.json') as fh:
+    word_mat = np.array(json.load(fh), dtype=np.float32)
 print('loading train_dataset')
-train_dataset = SQuADData('pre_data/input/train')
-dev_dataset = SQuADData('pre_data/input/dev')
+train_dataset = SQuADData('pre_data/train.npz')
 
 # define model
 print('define model')
-model = QANet(pre_trained)
-# model = torch.load('model/model.pt')
+model = QANet(word_mat)
 model = model.to(device)
 lr = config.learning_rate
 base_lr = 1.0
@@ -50,19 +64,11 @@ for epoch in range(config.num_epoch):
     for step in tqdm(range(len(train_dataset) // config.batch_size)):
         optimizer.zero_grad()
         cw, cc, qw, qc, y1s, y2s, ids = next(train_iter)
-        cw, cc, qw, qc, y1s, y2s = cw.to(device), cc.to(device), qw.to(device), qc.to(device), y1s.to(device), y2s.to(device)
         p1, p2 = model(cw, cc, qw, qc)
-        loss_1 = F.nll_loss(p1, y1s)
-        loss_2 = F.nll_loss(p2, y2s)
+        loss_1 = F.nll_loss(p1, y1s, reduction='mean')
+        loss_2 = F.nll_loss(p2, y2s, reduction='mean')
         loss = (loss_1 + loss_2) / 2
         losses.append(loss.item())
         loss.backward()
         optimizer.step()
         scheduler.step()
-        if(step % 100 == 0):
-            print('Epoch: %2d | Step: %3d | Loss: %3f' % (epoch, step, loss))
-    torch.save(model, 'model/model.pt')
-    f1, em, loss = valid(model, dev_dataset)
-    print('-' * 30)
-    print('Valid:')
-    print('F1: %.2f | EM: %.2f | LOSS: %.2f' % (f1, em, loss))

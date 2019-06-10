@@ -1,10 +1,12 @@
 import os
 import json
 from tqdm import tqdm
-import pickle
+import ujson as json
 import numpy as np
 import spacy
-from config import Config
+import config
+from utils import SQuADData
+import torch
 
 def tokenize(sentents):
     sents = nlp(sentents)
@@ -79,37 +81,140 @@ def get_embedding(emb_file):
     return embedding_mat, token2idx
 
 
+def get_char2idx():
+    char2idx = {}
+    all_chars = '`1234567890-=qwertyuiop[]\\asdfghjkl;\'zxcvbnm,./~!@#$%^&*()_+QWERTYUIOP{}|ASDFGHJKL:"ZXCVBNM<>?'
+    for i, c in enumerate(all_chars):
+        char2idx[c] = i + 2
+    char2idx['<pad>'] = 0
+    char2idx['<unk>'] = 1
+    return char2idx
+
+
+def get_input(example, word2idx, char2idx):
+    para_limit = config.para_limit
+    ques_limit = config.ques_limit
+    char_limit = config.char_limit
+
+    context_ids = np.zeros([para_limit], dtype=np.int32)
+    context_char_idx = np.zeros([para_limit, char_limit], dtype=np.int32)
+    question_idx = np.zeros([ques_limit], dtype=np.int32)
+    question_char_idx = np.zeros([ques_limit, char_limit], dtype=np.int32)
+
+    def _get_word(word):
+        for each in (word, word.lower(), word.capitalize(), word.upper()):
+            if each in word2idx:
+                return word2idx[each]
+        return 1
+
+    def _get_char(char):
+        if char in char2idx:
+            return char2idx[char]
+        return 1
+
+    for i, token in enumerate(example['context_tokens']):
+        if i == para_limit:
+            break
+        context_ids[i] = _get_word(token)
+    for i, token in enumerate(example['context_chars']):
+        if i == para_limit:
+            break
+        for j, char in enumerate(token):
+            if j == char_limit:
+                break
+            context_char_idx[i][j] = _get_char(char)
+    for i, token in enumerate(example['question_tokens']):
+        if i == ques_limit:
+            break
+        question_idx[i] = _get_word(token)
+    for i, token in enumerate(example['question_chars']):
+        if i == ques_limit:
+            break
+        for j, char in enumerate(token):
+            if j == char_limit:
+                break
+            question_char_idx[i][j] = _get_char(char)
+    return context_ids, context_char_idx, question_idx, question_char_idx
+
+
+def get_final_data(data, word2idx, char2idx):
+    context_tokens, context_chars, question_tokens, question_chars = [], [], [], []
+    y1s, y2s = [], []
+    ids = []
+    for example in tqdm(data):
+        context_token, context_char, question_token, question_char = get_input(example, word2idx, char2idx)
+        context_tokens.append(context_token)
+        context_chars.append(context_char)
+        question_tokens.append(question_token)
+        question_chars.append(question_char)
+        y1s.append(example['y1s'] if example['y1s'] < 400 else 399)
+        y2s.append(example['y2s'] if example['y2s'] < 400 else 399)
+        ids.append(example['uuid'])
+    return (torch.tensor(context_tokens), torch.tensor(context_chars), torch.tensor(question_tokens),
+            torch.tensor(question_chars), torch.tensor(y1s), torch.tensor(y2s), torch.tensor(ids))
+
+def save(obj, file):
+    with open(file, 'w') as f:
+        json.dump(obj, f)
+
+
+def load(file):
+    with open(file, 'r') as f:
+        data = json.load(f)
+    return data
+
+
+def save_input(data, dir):
+    torch.save(data[0], os.path.join(dir, 'context_tokens.pt'))
+    torch.save(data[1], os.path.join(dir, 'context_chars.pt'))
+    torch.save(data[2], os.path.join(dir, 'question_tokens.pt'))
+    torch.save(data[3], os.path.join(dir, 'question_chars.pt'))
+    torch.save(data[4], os.path.join(dir, 'y1s.pt'))
+    torch.save(data[5], os.path.join(dir, 'y2s.pt'))
+    torch.save(data[6], os.path.join(dir, 'ids.pt'))
+
 if __name__ == '__main__':
     data_path = '../data/squad/'
     embed_path = '../data/glove/'
     nlp = spacy.blank('en')
-    config = Config()
     data_dir = './pre_data'
 
     # print('Begin converting raw data....')
     # data_train = get_data(os.path.join(data_path, 'train-v2.0.json'))
     # print('Done!!')
     # print('Saving raw data to %s' % data_dir)
-    # pickle.dump(data_train, open(os.path.join(data_dir, 'data_train_pre.pkl'), 'wb'))
+    # save(data_train, os.path.join(data_dir, 'data_train_pre.json'))
     # print('Done!!!')
-
-    print('Begin converting raw data....')
-    data_dev = get_data(os.path.join(data_path, 'dev-v2.0.json'))
-    print('Done!!')
-    print('Saving raw data to %s' % data_dir)
-    pickle.dump(data_dev, open(os.path.join(data_dir, 'data_dev_pre.pkl'), 'wb'))
-    print('Done!!!')
+    #
+    # print('Begin converting raw data....')
+    # data_dev = get_data(os.path.join(data_path, 'dev-v2.0.json'))
+    # print('Done!!')
+    # print('Saving raw data to %s' % data_dir)
+    # save(data_dev, os.path.join(data_dir, 'data_dev_pre.json'))
+    # print('Done!!!')
     #
     # print('Begin converting embedding...')
     # embed_file = os.path.join(embed_path, 'glove.6B.300d.txt')
     # print(embed_file)
     # embedding = get_embedding(embed_file)
-    # pickle.dump(embedding, open(os.path.join(data_dir, 'embed_pre.pkl'), 'wb'))
+    # save(embedding, os.path.join(data_dir, 'embed_pre.json'))
     # print('Done!!!')
 
-    # print('Get SQuAD Dataset')
-    # train_dataset = SQuADData(os.path.join(data_dir, 'train_pre.pkl'))
-    # dev_dataset = SQuADData(os.path.join(data_dir, 'dev_pre.pkl'))
-    # pickle.dump(train_dataset, open(os.path.join(data_dir, 'train_dataset.pkl'), 'wb'))
-    # pickle.dump(dev_dataset, open(os.path.join(data_dir, 'dev_dataset.pkl'), 'wb'))
-    # print('Done!')
+    print('Begin converting raw data to input data')
+    word2idx = load('pre_data/embed_pre.json')[1]
+    data_train = load('pre_data/data_train_pre.json')
+    data_dev = load('pre_data/data_dev_pre.json')
+    # word2idx = embedding[1]
+    char2idx = get_char2idx()
+    final_train = get_final_data(data_train[0], word2idx, char2idx)
+    save_input(final_train, 'pre_data/input/train')
+    final_dev = get_final_data(data_dev[0], word2idx, char2idx)
+    save_input(final_dev, 'pre_data/input/dev')
+    print('Done!!')
+
+    print('Get SQuAD Dataset')
+    train_dataset = SQuADData(os.path.join(data_dir, 'data_train.json'))
+    dev_dataset = SQuADData(os.path.join(data_dir, 'data_dev.json'))
+    save(train_dataset, os.path.join(data_dir, 'train_dataset.json'))
+    save(dev_dataset, os.path.join(data_dir, 'dev_dataset.json'))
+    print('Done!')

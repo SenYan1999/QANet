@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.utils.data import Dataset
 import pickle
+import os
+from math import fabs
 
 
 # config = Config()
@@ -15,24 +17,31 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def f1_score(p1s, p2s, y1s, y2s):
+    p1s = torch.argmax(p1s, dim=1)
+    p2s = torch.argmax(p2s, dim=1)
     f1s = []
     for i in range(len(p1s)):
-        predicted = 0
+        predicted = -1
         if p1s[i] > y1s[i]:
             predicted = min(y2s[i] - p1s[i], p2s[i] - p1s[i])
             predicted = predicted + 1 if predicted >= 0 else 0
         else:
             predicted = min(p2s[i] - y1s[i], y2s[i] - y1s[i])
             predicted = predicted + 1 if predicted >= 0 else 0
-        recall = predicted.item() / (y2s[i].item() - y1s[i].item() + 1)
-        precise = predicted.item() / (p1s[i].item() - p2s[i].item() + 1)
-        f1s.append(2*recall*precise / (recall + precise))
+        recall = predicted / (y2s[i] - y1s[i] + 1)
+        precise = predicted / (torch.abs(p1s[i] - p2s[i]) + 1)
+        if recall + precise == 0:
+            f1s.append(0.)
+        else:
+            f1s.append((2*recall*precise / (recall + precise)).item())
     return sum(f1s) / len(f1s)
 
 
 def em(p1s, p2s, y1s, y2s):
+    p1s = torch.argmax(p1s, dim=1)
+    p2s = torch.argmax(p2s, dim=1)
     ems = []
-    for i in range(len(p2s)):
+    for i in range(len(y1s)):
         ems.append(int(p1s[i] == y1s[i] and p2s[i] == y2s[i]))
     return sum(ems) / len(ems)
 
@@ -47,17 +56,32 @@ def valid(model, data):
     ems = []
     num_batch_nums = config.val_batch_size
     with torch.no_grad():
-        for batch in num_batch_nums:
+        for batch in range(100):
             cw, cc, qw, qc, y1s, y2s, ids = next(dataiter)
-            cw, cc, qw, qc = cw.to(device), cc.to(device), qw.to(device), qc.to(device)
+            cw, cc, qw, qc, y1s, y2s = cw.to(device), cc.to(device), qw.to(device), qc.to(device), y1s.to(
+                device), y2s.to(device)
+            p1s, p2s = model(cw, cc, qw, qc)
             loss_1 = F.nll_loss(p1s, y1s)
             loss_2 = F.nll_loss(p2s, y2s)
             loss = (loss_1 + loss_2) / 2
             losses.append(loss.item())
-            p1s, p2s = model(cw, cc, qw, qc)
             f1s.append(f1_score(p1s, p2s, y1s, y2s))
             ems.append(em(p1s, p2s, y1s, y2s))
-    return np.mean(f1s), np.mean(ems)
+    return np.mean(f1s), np.mean(ems), np.mean(losses)
+
+
+def get_val_data():
+    data_dev = pickle.load(open('pre_data/data_dev.pkl', 'rb'))
+    context_tokens = data_dev[0][0:2000]
+    context_chars = data_dev[1][0:2000]
+    question_tokens = data_dev[2][0:2000]
+    question_chars = data_dev[3][0:2000]
+    y1s = data_dev[4][0:2000]
+    y2s = data_dev[5][0:2000]
+    ids = data_dev[6][0:2000]
+    pickle.dump((context_tokens, context_chars, question_tokens, question_chars,
+                 y1s, y2s, ids), open('pre_data/data_val.pkl', 'wb'))
+
 
 
 def get_input(input, word2idx, char2idx):
@@ -112,34 +136,23 @@ def get_char_idx(input, token2idx, para_limit, word_limit):
 
 
 class SQuADData(Dataset):
-    def __init__(self, data_path, word2idx):
-        self.data = pickle.load(open(data_path, 'rb'))[0]
-
-        self.word2idx = word2idx
-        self.char2idx = {}
-        all_chars = '`1234567890-=qwertyuiop[]\\asdfghjkl;\'zxcvbnm,./~!@#$%^&*()_+QWERTYUIOP{}|ASDFGHJKL:"ZXCVBNM<>?'
-        for i, c in enumerate(all_chars):
-            self.char2idx[c] = i + 2
-        self.char2idx['<pad>'] = 0
-        self.char2idx['<unk>'] = 1
+    def __init__(self, data_path):
+        self.context_tokens = torch.load(os.path.join(data_path, 'context_tokens.pt'))
+        self.context_chars = torch.load(os.path.join(data_path, 'context_chars.pt'))
+        self.question_tokens = torch.load(os.path.join(data_path, 'question_tokens.pt'))
+        self.question_chars = torch.load(os.path.join(data_path, 'question_chars.pt'))
+        self.y1s = torch.load(os.path.join(data_path, 'y1s.pt'))
+        self.y2s = torch.load(os.path.join(data_path, 'y2s.pt'))
+        self.ids = torch.load(os.path.join(data_path, 'ids.pt'))
 
     def __len__(self):
-        return len(self.data)
+        return len(self.y1s)
 
     def __getitem__(self, index):
-        data = self.data[index]
-        context_token = get_word_idx(data['context_tokens'], self.word2idx, config.para_limit)
-        context_char = get_char_idx(data['context_chars'], self.char2idx, config.para_limit, config.char_limit)
-        question_token = get_word_idx(data['question_tokens'], self.word2idx, config.ques_limit)
-        question_char = get_char_idx(data['question_chars'], self.char2idx, config.ques_limit, config.char_limit)
-        y1 = min(data['y1s'], 399)
-        y2 = min(data['y2s'], 399)
-        id = data['uuid']
-
-        return torch.tensor(context_token, dtype=torch.long, device = device),\
-            torch.tensor(context_char, dtype=torch.long, device = device), \
-            torch.tensor(question_token, dtype=torch.long, device=device), \
-            torch.tensor(question_char, dtype=torch.long, device = device), \
-            torch.tensor(y1, dtype=torch.long, device = device), \
-            torch.tensor(y2, dtype=torch.long, device = device), \
-            torch.tensor(id, dtype=torch.long, device = device)
+        return self.context_tokens[index].long(),\
+            self.context_chars[index].long(), \
+            self.question_tokens[index].long(), \
+            self.question_chars[index].long(), \
+            self.y1s[index].long(), \
+            self.y2s[index].long(), \
+            self.ids[index].long()
