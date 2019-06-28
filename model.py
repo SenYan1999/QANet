@@ -12,13 +12,14 @@ dropout_p = 0.5
 num_head = 8
 para_limit = 400
 ques_limit = 50
-device = 'cuda' if torch.cuda.is_available() else 'gpu'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class QANet(nn.Module):
     def __init__(self, word_pretrained: torch.Tensor):
         super(QANet, self).__init__()
-        self.word_embed = nn.Embedding.from_pretrained(torch.tensor(word_pretrained))
-        self.word_embed.weight[1].required_grad = True
+        self.word_embed = nn.Embedding.from_pretrained(torch.Tensor(word_pretrained), padding_idx=0)
+        # self.word_embed.weight.requires_grad = False
+        # self.word_embed.weight[1].required_grad = True
         self.char_embed = nn.Embedding(num_chars, d_char_embed, padding_idx=0)
         self.embed_highway = HighwayNetwork(2, d_embed)
         self.context_embed_enc = EncoderBlock(4, d_embed, d_model, 7, num_head, para_limit)
@@ -34,6 +35,7 @@ class QANet(nn.Module):
 
         cw, cc = self.word_embed(cw), self.char_embed(cc)
         qw, qc = self.word_embed(qw), self.char_embed(qc)
+
         cc, qc = torch.max(cc, dim=-2)[0], torch.max(qc, dim=-2)[0]
         C, Q = torch.cat((cw, cc), dim=-1), torch.cat((qw, qc), dim=-1)
         C, Q = self.embed_highway(C), self.embed_highway(Q)
@@ -82,10 +84,10 @@ class DepthwiseSeparableCNN(nn.Module):
             self.separable = nn.Conv1d(in_channels=in_c, out_channels=out_c,
                                        kernel_size=1, padding=0, bias=bias)
         # initialize the parameters
-        nn.init.kaiming_normal_(self.depthwise.weight)
-        nn.init.constant_(self.depthwise.bias, 0.0)
-        nn.init.kaiming_normal_(self.separable.weight)
-        nn.init.constant_(self.separable.bias, 0.0)
+        # nn.init.kaiming_normal_(self.depthwise.weight)
+        # nn.init.constant_(self.depthwise.bias, 0.01)
+        # nn.init.kaiming_normal_(self.separable.weight)
+        # nn.init.constant_(self.separable.bias, 0.01)
 
     def forward(self, x):
         x = x.permute(0, 2, 1)
@@ -143,7 +145,6 @@ class EncoderBlock(nn.Module):
     def __init__(self, num_conv, in_ch, out_ch, k, num_head, length):
         super(EncoderBlock, self).__init__()
         self.pos = PosEncoder(length, in_ch)
-        self.convLayers = nn.ModuleList()
         self.convLayers = nn.ModuleList([DepthwiseSeparableCNN(in_ch, out_ch, k) if _ == 0
                                else DepthwiseSeparableCNN(out_ch, out_ch, k) for _ in range(num_conv - 1)])
         self.selfAttention = MutiheadSelfAttention(num_head, out_ch)
@@ -177,11 +178,7 @@ class EncoderBlock(nn.Module):
 class CQAttention(nn.Module):
     def __init__(self):
         super(CQAttention, self).__init__()
-        w = torch.empty(d_model * 3)
-        lim = 3 / (2 * d_model)
-        nn.init.uniform_(w, -math.sqrt(lim), math.sqrt(lim))
-        self.w = nn.Parameter(w)
-        self.w.requires_grad = True
+        self.out = nn.Linear(d_model * 3, 1)
 
     def forward(self, C, Q, c_mask, q_mask):
         mask_c = c_mask.unsqueeze(2).expand(-1, -1, Q.shape[1]).to(torch.int32)
@@ -190,7 +187,7 @@ class CQAttention(nn.Module):
         C_, Q_ = C.unsqueeze(2), Q.unsqueeze(1)
         shape = (C.shape[0], C.shape[1], Q.shape[1], C.shape[2])
         C_, Q_ = C_.expand(shape), Q_.expand(shape)
-        S = torch.matmul(torch.cat((Q_, C_, torch.mul(C_, Q_)), dim=-1), self.w)
+        S = self.out(torch.cat((Q_, C_, torch.mul(C_, Q_)), dim=-1)).squeeze()
         S = mask_logits(S, mask)
         S1 = torch.softmax(S, dim=1)
         S2 = torch.softmax(S, dim=2)
@@ -204,27 +201,19 @@ class CQAttention(nn.Module):
 class Pointer(nn.Module):
     def __init__(self):
         super(Pointer, self).__init__()
-        w0 = torch.empty(2 * d_model)
-        w1 = torch.empty(2 * d_model)
-        lim = 3 / (2 * d_model)
-        nn.init.uniform_(w0, -math.sqrt(lim), math.sqrt(lim))
-        nn.init.uniform_(w1, -math.sqrt(lim), math.sqrt(lim))
-        self.w0 = nn.Parameter(w0)
-        self.w1 = nn.Parameter(w1)
+        self.out_1 = nn.Linear(2 * d_model, 1)
+        self.out_2 = nn.Linear(2 * d_model, 1) 
+        # self.out_1.weight.data.fill_(0.05)
+        # self.out_2.weight.data.fill_(0.05)
 
     def forward(self, M1, M2, M3, mask):
-        p1 = torch.matmul(torch.cat([M1, M2], dim=-1), self.w0)
-        p2 = torch.matmul(torch.cat([M1, M3], dim=-1), self.w1)
+        p1 = self.out_1(torch.cat([M1, M2], dim=-1)).squeeze()
+        p2 = self.out_2(torch.cat([M1, M3], dim=-1)).squeeze()
         p1 = mask_logits(p1, mask)
         p2 = mask_logits(p2, mask)
         p1 = F.log_softmax(p1, dim=-1)
         p2 = F.log_softmax(p2, dim=-1)
         return p1, p2
-
-
-def mask_zeros(x, x_mask):
-    return x * x_mask
-
 
 def mask_logits(x, x_mask):
     return x * x_mask + (-1e30) * (1 - x_mask)

@@ -59,6 +59,7 @@ def get_data(file):
                     examples.append(example)
                     examples_eval[str(total)] = {'context': context, 'question': question,
                                                  'answer': answer_texts, 'context_span': context_span}
+                    break
     return (examples, examples_eval)
 
 
@@ -179,20 +180,20 @@ if __name__ == '__main__':
     nlp = spacy.blank('en')
     data_dir = './pre_data'
 
-    # print('Begin converting raw data....')
-    # data_train = get_data(os.path.join(data_path, 'train-v2.0.json'))
-    # print('Done!!')
-    # print('Saving raw data to %s' % data_dir)
-    # save(data_train, os.path.join(data_dir, 'data_train_pre.json'))
-    # print('Done!!!')
-    #
-    # print('Begin converting raw data....')
-    # data_dev = get_data(os.path.join(data_path, 'dev-v2.0.json'))
-    # print('Done!!')
-    # print('Saving raw data to %s' % data_dir)
-    # save(data_dev, os.path.join(data_dir, 'data_dev_pre.json'))
-    # print('Done!!!')
-    #
+    print('Begin converting raw data....')
+    data_train = get_data(os.path.join(data_path, 'train-v2.0.json'))
+    print('Done!!')
+    print('Saving raw data to %s' % data_dir)
+    save(data_train, os.path.join(data_dir, 'data_train_pre.json'))
+    print('Done!!!')
+
+    print('Begin converting raw data....')
+    data_dev = get_data(os.path.join(data_path, 'dev-v2.0.json'))
+    print('Done!!')
+    print('Saving raw data to %s' % data_dir)
+    save(data_dev, os.path.join(data_dir, 'data_dev_pre.json'))
+    print('Done!!!')
+
     # print('Begin converting embedding...')
     # embed_file = os.path.join(embed_path, 'glove.6B.300d.txt')
     # print(embed_file)
@@ -202,8 +203,8 @@ if __name__ == '__main__':
 
     print('Begin converting raw data to input data')
     word2idx = load('pre_data/embed_pre.json')[1]
-    data_train = load('pre_data/data_train_pre.json')
-    data_dev = load('pre_data/data_dev_pre.json')
+    # data_train = load('pre_data/data_train_pre.json')
+    # data_dev = load('pre_data/data_dev_pre.json')
     # word2idx = embedding[1]
     char2idx = get_char2idx()
     final_train = get_final_data(data_train[0], word2idx, char2idx)

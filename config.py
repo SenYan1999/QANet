@@ -81,7 +81,7 @@ num_threads = 4 #Number of threads in input pipeline
 is_bucket = False #build bucket batch iterator or not
 bucket_range = [40, 401, 40] #the range of bucket
 
-batch_size = 15 #Batch size
+batch_size = 8 #Batch size
 num_steps = 60000 #Number of steps
 checkpoint = 200 #checkpoint to save and evaluate the model
 period = 100 #period to save batch loss
@@ -90,7 +90,7 @@ test_num_batches = 150 #Number of batches to evaluate the model
 dropout = 0.1 #Dropout prob across the layers
 dropout_char = 0.05 #Dropout prob across the layers
 grad_clip = 5.0 #Global Norm gradient clipping rate
-learning_rate = 0.001 #Learning rate
+learning_rate = 0.01 #Learning rate
 lr_warm_up_num = 1000 #Number of warm-up steps of learning rate
 ema_decay = 0.9999 #Exponential moving average decay
 beta1 = 0.8 #Beta 1
