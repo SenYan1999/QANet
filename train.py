@@ -1,12 +1,7 @@
 import torch
-import torch.nn as nn
 from tqdm import tqdm
-import numpy as np
-import pickle
-# from config import Config
 import config
 from model import QANet
-# from standardmodel import QANet
 from utils import SQuADData
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -14,7 +9,6 @@ from utils import valid
 import torch.optim as optim
 from math import log2
 from proc import load
-from collections import Counter
 
 
 # prepare data

@@ -2,16 +2,12 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 import numpy as np
-import pickle
-from model import QANet
-# from config import Config
 import ujson as json
 import config
 from standardmodel import QANet
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-from utils import valid
 import torch.optim as optim
 from math import log2
 
