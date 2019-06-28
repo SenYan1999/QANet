@@ -17,8 +17,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def f1_score(p1s, p2s, y1s, y2s):
-    p1s = torch.argmax(p1s, dim=1)
-    p2s = torch.argmax(p2s, dim=1)
+    p1s = torch.argmax(p1s, dim=1).to(torch.float)
+    p2s = torch.argmax(p2s, dim=1).to(torch.float)
+    y1s = y1s.to(torch.float)
+    y2s = y2s.to(torch.float)
     f1s = []
     for i in range(len(p1s)):
         predicted = -1
@@ -61,6 +63,9 @@ def valid(model, data):
             cw, cc, qw, qc, y1s, y2s = cw.to(device), cc.to(device), qw.to(device), qc.to(device), y1s.to(
                 device), y2s.to(device)
             p1s, p2s = model(cw, cc, qw, qc)
+            print('P1:', torch.argmax(p1s, dim=-1), 'P2:', torch.argmax(p2s, dim=-1))
+            print('y1:', y1s, 'y2:', y2s)
+            print('-' * 50)
             loss_1 = F.nll_loss(p1s, y1s)
             loss_2 = F.nll_loss(p2s, y2s)
             loss = (loss_1 + loss_2) / 2
