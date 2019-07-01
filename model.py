@@ -17,7 +17,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class QANet(nn.Module):
     def __init__(self, word_pretrained: torch.Tensor):
         super(QANet, self).__init__()
-        self.word_embed = nn.Embedding.from_pretrained(torch.Tensor(word_pretrained), padding_idx=0)
+        self.word_embed = nn.Embedding.from_pretrained(word_pretrained, padding_idx=0)
         # self.word_embed.weight.requires_grad = False
         # self.word_embed.weight[1].required_grad = True
         self.char_embed = nn.Embedding(num_chars, d_char_embed, padding_idx=0)
@@ -77,6 +77,7 @@ class HighwayNetwork(nn.Module):
 
 class Conv1d(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size=1, padding=0, bias=True, relu=False, groups=1, stride=1):
+        super(Conv1d, self).__init__()
         self.out = nn.Conv1d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, padding=padding, bias=bias, groups=groups, stride=stride)
         if relu == True:
             self.relu = True
