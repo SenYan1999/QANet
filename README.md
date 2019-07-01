@@ -1,3 +1,3 @@
 # QANet
 
-This is a exercise about implementing QANet with pytorch.
+This is an exercise about implementing QANet with pytorch.
