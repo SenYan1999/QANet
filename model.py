@@ -16,11 +16,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class QANet(nn.Module):
     def __init__(self, word_pretrained: torch.Tensor):
+    # def __init__(self, word_pretrained: torch.Tensor, char_pretrained: torch.Tensor):
         super(QANet, self).__init__()
         self.word_embed = nn.Embedding.from_pretrained(word_pretrained, padding_idx=0)
         # self.word_embed.weight.requires_grad = False
         # self.word_embed.weight[1].required_grad = True
         self.char_embed = nn.Embedding(num_chars, d_char_embed, padding_idx=0)
+        # self.char_embed = nn.Embedding.from_pretrained(char_pretrained, padding_idx=0)
         self.embed_highway = HighwayNetwork(2, d_embed)
         self.context_embed_enc = EncoderBlock(4, d_embed, d_model, 7, num_head, para_limit)
         self.question_embed_enc = EncoderBlock(4, d_embed, d_model, 7, num_head, ques_limit)
@@ -65,14 +67,17 @@ class HighwayNetwork(nn.Module):
     def __init__(self, layer_num: int, size: int):
         super(HighwayNetwork, self).__init__()
         self.layer_num = layer_num
-        self.T = nn.Linear(size, size, bias=True)
-        self.H = nn.Linear(size, size, bias=True)
+        # self.T = nn.Linear(size, size, bias=True)
+        # self.H = nn.Linear(size, size, bias=True)
+        self.H = Conv1d(size, size, relu=False, bias=True)
+        self.T = Conv1d(size, size, bias=False)
 
     def forward(self, x):
+        x = x.transpose(1, 2)
         for i in range(self.layer_num):
             h, t = F.relu(self.H(x)), torch.sigmoid(self.T(x))
             out = h * t + x * (1 - t)
-        return F.dropout(out, p=dropout_p, training=self.training)
+        return F.dropout(out, p=dropout_p, training=self.training).transpose(1, 2)
 
 
 class Conv1d(nn.Module):
@@ -94,16 +99,13 @@ class Conv1d(nn.Module):
 
 
 class DepthwiseSeparableCNN(nn.Module):
-    def __init__(self, in_c, out_c, k, dimension=1, bias=True):
+    def __init__(self, in_c, out_c, k, dimension=1, bias=True, relu=False):
         super(DepthwiseSeparableCNN, self).__init__()
         if dimension == 1:
-            self.depthwise = nn.Conv1d(in_channels=in_c, out_channels=in_c, groups=in_c,
-                                       kernel_size=k, padding=(k - 1) // 2, bias=bias)
-            self.separable = nn.Conv1d(in_channels=in_c, out_channels=out_c,
-                                       kernel_size=1, padding=0, bias=bias)
-        # initialize the parameters
-        nn.init.xavier_uniform_(self.depthwise.weight)
-        nn.init.xavier_uniform_(self.separable.weight)
+            self.depthwise = Conv1d(in_channels=in_c, out_channels=in_c, groups=in_c,
+                                       kernel_size=k, padding=(k - 1) // 2, bias=bias, relu=relu)
+            self.separable = Conv1d(in_channels=in_c, out_channels=out_c,
+                                       kernel_size=1, padding=0, bias=bias, relu=relu)
 
     def forward(self, x):
         x = x.permute(0, 2, 1)
@@ -161,8 +163,8 @@ class EncoderBlock(nn.Module):
     def __init__(self, num_conv, in_ch, out_ch, k, num_head, length):
         super(EncoderBlock, self).__init__()
         self.pos = PosEncoder(length, in_ch)
-        self.convLayers = nn.ModuleList([DepthwiseSeparableCNN(in_ch, out_ch, k) if _ == 0
-                               else DepthwiseSeparableCNN(out_ch, out_ch, k) for _ in range(num_conv - 1)])
+        self.convLayers = nn.ModuleList([DepthwiseSeparableCNN(in_ch, out_ch, k, relu=True, bias=True) if _ == 0
+                               else DepthwiseSeparableCNN(out_ch, out_ch, k, relu=True, bias=True) for _ in range(num_conv - 1)])
         self.selfAttention = MutiheadSelfAttention(num_head, out_ch)
         self.out = nn.Linear(out_ch, out_ch)
         self.normcs = nn.ModuleList([nn.LayerNorm([length, out_ch]) for _ in range(num_conv - 1)])
@@ -175,7 +177,6 @@ class EncoderBlock(nn.Module):
         for i, conv in enumerate(self.convLayers):
             res = x
             x = conv(x)
-            x = F.relu(x)
             x = F.dropout(x, p=dropout_p, training=self.training)
             if i > 0:
                 x = x + self.normcs[i - 1](res)
@@ -267,8 +268,8 @@ class Pointer(nn.Module):
         self.out_2 = Conv1d(in_ch=d_model * 2, out_ch=1)
 
     def forward(self, M1, M2, M3, mask):
-        p1 = self.out_1(torch.cat([M1, M2], dim=-1)).squeeze()
-        p2 = self.out_2(torch.cat([M1, M3], dim=-1)).squeeze()
+        p1 = self.out_1(torch.cat([M1, M2], dim=-1).transpose(1, 2)).transpose(1, 2).squeeze()
+        p2 = self.out_2(torch.cat([M1, M3], dim=-1).transpose(1, 2)).transpose(1, 2).squeeze()
         p1 = mask_logits(p1, mask)
         p2 = mask_logits(p2, mask)
         p1 = F.log_softmax(p1, dim=-1)
