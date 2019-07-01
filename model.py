@@ -75,6 +75,23 @@ class HighwayNetwork(nn.Module):
         return F.dropout(out, p=dropout_p, training=self.training)
 
 
+class Conv1d(nn.Module):
+    def __init__(self, in_ch, out_ch, kernel_size=1, padding=0, bias=True, relu=False, groups=1, stride=1):
+        self.out = nn.Conv1d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, padding=padding, bias=bias, groups=groups, stride=stride)
+        if relu == True:
+            self.relu = True
+            nn.init.kaiming_normal_(self.out.weight, nonlinearity='relu')
+        else:
+            self.relu = False
+            nn.init.xavier_uniform_(self.out.weight)
+
+    def forward(self, x):
+        if self.relu == True:
+            return F.relu(self.out(x))
+        else:
+            return self.out(x)
+
+
 class DepthwiseSeparableCNN(nn.Module):
     def __init__(self, in_c, out_c, k, dimension=1, bias=True):
         super(DepthwiseSeparableCNN, self).__init__()
@@ -84,10 +101,8 @@ class DepthwiseSeparableCNN(nn.Module):
             self.separable = nn.Conv1d(in_channels=in_c, out_channels=out_c,
                                        kernel_size=1, padding=0, bias=bias)
         # initialize the parameters
-        # nn.init.kaiming_normal_(self.depthwise.weight)
-        # nn.init.constant_(self.depthwise.bias, 0.01)
-        # nn.init.kaiming_normal_(self.separable.weight)
-        # nn.init.constant_(self.separable.bias, 0.01)
+        nn.init.xavier_uniform_(self.depthwise.weight)
+        nn.init.xavier_uniform_(self.separable.weight)
 
     def forward(self, x):
         x = x.permute(0, 2, 1)
@@ -175,36 +190,80 @@ class EncoderBlock(nn.Module):
         return x
 
 
+# class CQAttention(nn.Module):
+#     def __init__(self):
+#         super(CQAttention, self).__init__()
+#         self.out = nn.Linear(d_model * 3, 1)
+#
+#     def forward(self, C, Q, c_mask, q_mask):
+#         mask_c = c_mask.unsqueeze(2).expand(-1, -1, Q.shape[1]).to(torch.int32)
+#         mask_q = q_mask.unsqueeze(1).expand(-1, C.shape[1], -1).to(torch.int32)
+#         mask = (mask_c & mask_q).to(torch.float)
+#         C_, Q_ = C.unsqueeze(2), Q.unsqueeze(1)
+#         shape = (C.shape[0], C.shape[1], Q.shape[1], C.shape[2])
+#         C_, Q_ = C_.expand(shape), Q_.expand(shape)
+#         S = self.out(torch.cat((Q_, C_, torch.mul(C_, Q_)), dim=-1)).squeeze()
+#         S = mask_logits(S, mask)
+#         S1 = torch.softmax(S, dim=1)
+#         S2 = torch.softmax(S, dim=2)
+#         C2Q = torch.bmm(S1, Q)
+#         Q2C = torch.bmm(torch.bmm(S1, S2.transpose(1, 2)), C)
+#         out = torch.cat([C, C2Q, torch.mul(C, C2Q), torch.mul(C, Q2C)], dim=2)  # B * 400 * (4 * d_model)
+#         out = F.dropout(out, p=dropout_p, training=self.training)
+#         return out
+
+
 class CQAttention(nn.Module):
     def __init__(self):
         super(CQAttention, self).__init__()
-        self.out = nn.Linear(d_model * 3, 1)
+        self.w4q = torch.empty(d_model, 1)
+        self.w4c = torch.empty(d_model, 1)
+        self.w4mul = torch.empty(1, 1, d_model)
+        self.bias = torch.empty(1)
+        nn.init.xavier_uniform_(self.w4c)
+        nn.init.xavier_uniform_(self.w4q)
+        nn.init.xavier_uniform_(self.w4mul)
+        nn.init.constant_(self.bias, 0)
+        self.w4q = nn.Parameter(self.w4c)
+        self.w4c = nn.Parameter(self.w4q)
+        self.w4mul = nn.Parameter(self.w4mul)
+        self.bias = nn.Parameter(self.bias)
 
     def forward(self, C, Q, c_mask, q_mask):
-        mask_c = c_mask.unsqueeze(2).expand(-1, -1, Q.shape[1]).to(torch.int32)
-        mask_q = q_mask.unsqueeze(1).expand(-1, C.shape[1], -1).to(torch.int32)
-        mask = (mask_c & mask_q).to(torch.float)
-        C_, Q_ = C.unsqueeze(2), Q.unsqueeze(1)
-        shape = (C.shape[0], C.shape[1], Q.shape[1], C.shape[2])
-        C_, Q_ = C_.expand(shape), Q_.expand(shape)
-        S = self.out(torch.cat((Q_, C_, torch.mul(C_, Q_)), dim=-1)).squeeze()
-        S = mask_logits(S, mask)
-        S1 = torch.softmax(S, dim=1)
-        S2 = torch.softmax(S, dim=2)
-        C2Q = torch.bmm(S1, Q)
-        Q2C = torch.bmm(torch.bmm(S1, S2.transpose(1, 2)), C)
-        out = torch.cat([C, C2Q, torch.mul(C, C2Q), torch.mul(C, Q2C)], dim=2)  # B * 400 * (4 * d_model)
-        out = F.dropout(out, p=dropout_p, training=self.training)
+        batch_size, C_len, d_model = C.shape
+        batch_size, Q_len, d_model = Q.shape
+        c_mask = c_mask.unsqueeze(dim=2).expand(-1, -1, Q_len)
+        q_mask = q_mask.unsqueeze(dim=1).expand(-1, C_len, -1)
+        S = self.trilinear_for_attention(C, Q)
+        S1 = torch.softmax(mask_logits(S, q_mask), dim=2)
+        S2 = torch.softmax(mask_logits(S, c_mask), dim=1)
+        A = torch.bmm(S1, Q)
+        B = torch.bmm(torch.bmm(S1, S2.transpose(1, 2)), C)
+        out = torch.cat([C, A, torch.mul(C, A), torch.mul(C, B)], dim=2)
         return out
+
+    def trilinear_for_attention(self, C, Q):
+        batch_size, C_len, d_model = C.shape
+        batch_size, Q_len, d_model = Q.shape
+        C = F.dropout(C, p=dropout_p, training=self.training)
+        Q = F.dropout(Q, p=dropout_p, training=self.training)
+        surbres0 = torch.matmul(C, self.w4c).expand(-1, -1, Q_len)
+        surbres1 = torch.matmul(Q, self.w4q).transpose(1, 2).expand(-1, C_len, -1)
+        surbres2 = torch.matmul(C * self.w4mul, Q.transpose(1, 2))
+        res = surbres0 + surbres1 + surbres2
+        res = res + self.bias
+        return res
 
 
 class Pointer(nn.Module):
     def __init__(self):
         super(Pointer, self).__init__()
-        self.out_1 = nn.Linear(2 * d_model, 1)
-        self.out_2 = nn.Linear(2 * d_model, 1) 
+        # self.out_1 = nn.Linear(2 * d_model, 1)
+        # self.out_2 = nn.Linear(2 * d_model, 1)
         # self.out_1.weight.data.fill_(0.05)
         # self.out_2.weight.data.fill_(0.05)
+        self.out_1 = Conv1d(in_ch=d_model * 2, out_ch=1)
+        self.out_2 = Conv1d(in_ch=d_model * 2, out_ch=1)
 
     def forward(self, M1, M2, M3, mask):
         p1 = self.out_1(torch.cat([M1, M2], dim=-1)).squeeze()
