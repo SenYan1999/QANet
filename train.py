@@ -60,3 +60,4 @@ for epoch in range(config.num_epoch):
     print('-' * 30)
     print('Valid:')
     print('F1: %.2f | EM: %.2f | LOSS: %.2f' % (f1, em, loss))
+
